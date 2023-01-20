@@ -11,22 +11,6 @@ from sunpy.util import MetaDict
 __all__ = ['meta_keywords', 'make_fitswcs_header', 'get_observer_meta', 'make_heliographic_header']
 
 
-def meta_keywords():
-    """
-    Returns the metadata keywords that are used when creating a `sunpy.map.GenericMap`.
-
-    Examples
-    --------
-    Returns a dictionary of all meta keywords that are used in a `sunpy.map.GenericMap` header:
-        >>> import sunpy.map
-        >>> sunpy.map.meta_keywords()
-        {'cunit1': 'Units of the coordinate increments along naxis1 e.g. arcsec **required',
-         'cunit2': 'Units of the coordinate increments along naxis2 e.g. arcsec **required',
-         ...
-    """
-    return _map_meta_keywords
-
-
 @u.quantity_input(equivalencies=u.spectral())
 def make_fitswcs_header(data,
                         coordinate,
@@ -381,6 +365,9 @@ _map_meta_keywords = {
     'CD2_2':
     'Matrix element CDi_j describing the rotation required to align solar North with the top of the image.'
 }
+
+
+meta_keywords = _map_meta_keywords.copy()
 
 
 def make_heliographic_header(date, observer_coordinate, shape, *, frame, projection_code="CAR"):
