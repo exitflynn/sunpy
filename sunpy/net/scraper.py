@@ -19,7 +19,6 @@ from astropy.time import Time
 from sunpy import log
 from sunpy.extern.parse import parse
 from sunpy.time import TimeRange
-from sunpy.util.exceptions import warn_user
 
 __all__ = ['Scraper']
 
@@ -33,7 +32,7 @@ TIME_CONVERSIONS = {'%Y': r'\d{4}', '%y': r'\d{2}',
                     '%S': r'\d{2}', '%e': r'\d{3}', '%f': r'\d{6}'}
 TIME_CONVERSIONS = {"{year:4d}": "%Y", "{year:2d}": "%y",
             "{month:2d}": "%m",
-            "{day:0d}": "%d",
+            "{day:2d}": "%d",
             "{hour:2d}": "%H",
             "{minute:2d}": "%M",
             "{second:2d}": "%S",
@@ -91,11 +90,16 @@ class Scraper:
     """
 
     def __init__(self, pattern, regex=False, **kwargs):
-        self.pattern = pattern.format(**kwargs)
-        timepattern = self.pattern
+        pattern = pattern.format(**kwargs)
+        timepattern = pattern
         for k, v in TIME_CONVERSIONS.items():
-            timepattern = timepattern.replace(k, v)
+            while k in timepattern:
+                timepattern = timepattern.replace(k, v)
         self.timepattern = timepattern
+        if "year:4d" in pattern and "year:2d" in pattern:
+            while "year:2d" in pattern:
+                pattern = pattern.replace("year:2d", ":2d")
+        self.pattern = pattern
         self.domain = "{0.scheme}://{0.netloc}/".format(urlsplit(self.pattern))
         milliseconds = re.search(r'\%e', self.pattern)
         if not milliseconds:
@@ -194,59 +198,14 @@ class Scraper:
         """
         # remove the user and passwd from files if there:
         url = url.replace("anonymous:data@sunpy.org@", "")
+        datestr, formatstr = "", ""
+        dateinfo = parse(self.pattern, url)
+        for timetype in TIME_CONVERSIONS:
+            if timetype in self.pattern:
+                formatstr = formatstr + TIME_CONVERSIONS[timetype]
+                datestr = datestr + str(dateinfo[timetype[1:-4]])
 
-        def url_to_list(txt):
-            # Substitutes '.' and '_' for '/'.
-            return re.sub(r'\.|_', '/', txt).split('/')
-
-        # create a list of all the blocks in times - assuming they are all
-        # separated with either '.', '_' or '/'.
-        pattern_list = url_to_list(self.pattern)
-        url_list = url_to_list(url)
-        time_order = ['%Y', '%y', '%b', '%B', '%m', '%d', '%j',
-                      '%H', '%I', '%M', '%S', '%e', '%f']
-        final_date = []
-        final_pattern = []
-        # Find in directory and filename
-        for pattern_elem, url_elem in zip(pattern_list, url_list):
-            time_formats = [x for x in time_order if x in pattern_elem]
-            if len(time_formats) > 0:
-                # Find whether there's text that should not be here
-                toremove = re.split('%.', pattern_elem)
-                if len(toremove) > 0:
-                    for bit in toremove:
-                        if bit != '':
-                            url_elem = url_elem.replace(bit, '', 1)
-                            pattern_elem = pattern_elem.replace(bit, '', 1)
-                final_date.append(url_elem)
-                final_pattern.append(pattern_elem)
-                for time_bit in time_formats:
-                    time_order.remove(time_bit)
-        # Find and remove repeated elements eg: %Y in ['%Y', '%Y%m%d']
-        # Make all as single strings
-        date_together = ''.join(final_date)
-        pattern_together = ''.join(final_pattern)
-        re_together = pattern_together
-        for k, v in TIME_CONVERSIONS.items():
-            re_together = re_together.replace(k, v)
-
-        # Lists to contain the unique elements of the date and the pattern
-        final_date = list()
-        final_pattern = list()
-        re_together = re_together.replace('[A-Z]', '\\[A-Z]')
-        for p, r in zip(pattern_together.split('%')[1:], re_together.split('\\')[1:]):
-            if p == 'e':
-                continue
-            regexp = fr'\{r}' if not r.startswith('[') else r
-            pattern = f'%{p}'
-            date_part = re.search(regexp, date_together)
-            date_together = date_together[:date_part.start()] \
-                + date_together[date_part.end():]
-            if pattern not in final_pattern:
-                final_pattern.append(f'%{p}')
-                final_date.append(date_part.group())
-        return Time.strptime(' '.join(final_date),
-                             ' '.join(final_pattern))
+        return Time.strptime(datestr, formatstr)
 
     def filelist(self, timerange):
         """
@@ -393,7 +352,7 @@ class Scraper:
             `True` if URL's valid time range overlaps the given timerange, else `False`.
         """
         if hasattr(self, 'extractor'):
-            exdict = parse(self.extractor, url).named
+            exdict = parse(self.pattern, url).named
             tr = get_timerange_from_exdict(exdict)
             return tr.intersects(timerange)
         else:
@@ -425,7 +384,7 @@ class Scraper:
             raise
 
 
-    def _extract_files_meta(self, timerange, extractor, matcher=None):
+    def _extract_files_meta(self, timerange, matcher=None):
         """
         Returns metadata information contained in URLs.
 
@@ -433,8 +392,6 @@ class Scraper:
         ----------
         timerange : `~sunpy.time.TimeRange`
             Time interval where to find the directories for a given pattern.
-        extractor : `str`
-            Pattern to extract metadata by parsing the URL.
         matcher : `dict`
             Dictionary to check if extracted metadata is valid.
 
@@ -443,11 +400,10 @@ class Scraper:
         `list` of `dict`
             List of metadata info for all URLs.
         """
-        self.extractor = extractor
         urls = self.filelist(timerange)
         metalist = []
         for url in urls:
-            metadict = parse(extractor, url)
+            metadict = parse(self.pattern, url)
             if metadict is not None:
                 append = True
                 metadict = metadict.named
